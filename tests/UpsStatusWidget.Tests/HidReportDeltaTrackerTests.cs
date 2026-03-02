@@ -14,6 +14,8 @@ static class Program
             SameReportRepeated_ProducesNoAdditionalDeltas,
             CorrelationLine_FormatsValuesAndNa,
             RuntimeMapper_UsesRid12BySixty,
+            UpdateCore_ParsesTagVersion,
+            UpdateCore_ParsesReleaseJsonAndSelectsInstaller,
             SnapshotHistory_RespectsCapacity,
             SnapshotHistory_ReturnsRecentInChronologicalOrder
         };
@@ -80,6 +82,40 @@ static class Program
     {
         double? runtime = Pid0002RuntimeMapper.TryMapMinutes(1532, null);
         AssertEqual(26d, runtime, nameof(RuntimeMapper_UsesRid12BySixty));
+    }
+
+    static void UpdateCore_ParsesTagVersion()
+    {
+        if (!UpdateCore.TryParseTagVersion("v2.1.1", out var v)) {
+            throw new InvalidOperationException(nameof(UpdateCore_ParsesTagVersion) + ": parse failed");
+        }
+        AssertEqual(2, v.Major, "major");
+        AssertEqual(1, v.Minor, "minor");
+        AssertEqual(1, v.Build, "build");
+    }
+
+    static void UpdateCore_ParsesReleaseJsonAndSelectsInstaller()
+    {
+        string json = "{\n" +
+            "  \"tag_name\": \"v2.1.1\",\n" +
+            "  \"html_url\": \"https://example/release\",\n" +
+            "  \"assets\": [\n" +
+            "    { \"name\": \"UPS-Status-Widget-Setup-v2.1.1-x86.exe\", \"browser_download_url\": \"https://example/x86\", \"digest\": \"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\" },\n" +
+            "    { \"name\": \"UPS-Status-Widget-Setup-v2.1.1-x64.exe\", \"browser_download_url\": \"https://example/x64\", \"digest\": \"sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\" }\n" +
+            "  ]\n" +
+            "}";
+
+        if (!UpdateCore.TryParseReleaseJson(json, out var rel)) {
+            throw new InvalidOperationException(nameof(UpdateCore_ParsesReleaseJsonAndSelectsInstaller) + ": parse failed");
+        }
+
+        AssertEqual("v2.1.1", rel.Tag, "tag");
+        AssertEqual(2, rel.Assets.Length, "assets");
+
+        var selected = UpdateCore.SelectInstallerAsset(rel, is64BitProcess: true);
+        if (!selected.HasValue) throw new InvalidOperationException("installer not selected");
+        AssertEqual("UPS-Status-Widget-Setup-v2.1.1-x64.exe", selected.Value.Name, "asset");
+        AssertEqual("bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", selected.Value.Sha256Hex, "sha");
     }
 
     static void SnapshotHistory_RespectsCapacity()

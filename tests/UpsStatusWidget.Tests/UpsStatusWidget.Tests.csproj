@@ -10,6 +10,7 @@
     <Compile Include="..\..\src\HidReportDeltaTracker.cs" Link="HidReportDeltaTracker.cs" />
     <Compile Include="..\..\src\HidCorrelationFormatter.cs" Link="HidCorrelationFormatter.cs" />
     <Compile Include="..\..\src\Pid0002RuntimeMapper.cs" Link="Pid0002RuntimeMapper.cs" />
+    <Compile Include="..\..\src\UpdateCore.cs" Link="UpdateCore.cs" />
     <Compile Include="..\..\src\UpsSnapshot.cs" Link="UpsSnapshot.cs" />
     <Compile Include="..\..\src\SnapshotHistory.cs" Link="SnapshotHistory.cs" />
     <Compile Include="..\..\src\UpsRawSnapshot.cs" Link="UpsRawSnapshot.cs" />
