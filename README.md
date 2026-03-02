@@ -56,6 +56,12 @@ dotnet build src/UpsStatusWidget.csproj -c Release
 dotnet publish src/UpsStatusWidget.csproj -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true --output out/
 ```
 
+## Installer
+
+- Inno Setup script: `installer/ups-status-widget.iss`
+- CI workflow: `.github/workflows/installer.yml`
+- On version tags (`v*`), CI builds and attaches installer `.exe` to GitHub Release.
+
 ## Tests
 
 ```powershell
