@@ -6,6 +6,7 @@ using System.Drawing.Text;
 using System.IO;
 using System.Net.Http;
 using System.Runtime.InteropServices;
+using System.Security.Cryptography;
 using System.Text.Json;
 using System.Threading;
 using System.Windows.Forms;
@@ -133,58 +134,74 @@ static class Win32
     }
 }
 
-readonly record struct UpdateInfo(string Tag, Version Version, string Url);
+readonly record struct UpdateInfo(
+    string Tag,
+    Version Version,
+    string Url,
+    ReleaseAsset? InstallerAsset
+);
 
 static class UpdateChecker
 {
     const string LatestReleaseUrl = "https://api.github.com/repos/Vikquick/ups-status-widget/releases/latest";
 
-    public static async System.Threading.Tasks.Task<UpdateInfo?> GetLatestAsync()
+    public static async System.Threading.Tasks.Task<UpdateInfo?> GetLatestAsync(bool is64BitProcess)
     {
         try {
             using var client = new HttpClient();
             client.DefaultRequestHeaders.UserAgent.ParseAdd("ups-status-widget");
             string json = await client.GetStringAsync(LatestReleaseUrl).ConfigureAwait(false);
-            using var doc = JsonDocument.Parse(json);
-            if (!doc.RootElement.TryGetProperty("tag_name", out var tagEl)) return null;
-            string tag = tagEl.GetString() ?? string.Empty;
-            if (!TryParseTagVersion(tag, out var ver)) return null;
-
-            string url = string.Empty;
-            if (doc.RootElement.TryGetProperty("html_url", out var urlEl)) {
-                url = urlEl.GetString() ?? string.Empty;
-            }
-
-            return new UpdateInfo(tag, ver, url);
+            if (!UpdateCore.TryParseReleaseJson(json, out var rel)) return null;
+            var installer = UpdateCore.SelectInstallerAsset(rel, is64BitProcess);
+            return new UpdateInfo(rel.Tag, rel.Version, rel.HtmlUrl, installer);
         }
         catch {
             return null;
         }
     }
 
-    static bool TryParseTagVersion(string tag, out Version version)
+    public static async System.Threading.Tasks.Task<string> DownloadInstallerAsync(UpdateInfo info)
     {
-        version = new Version(0, 0);
-        if (string.IsNullOrWhiteSpace(tag)) return false;
-        string s = tag.Trim();
-        if (s.StartsWith("v", StringComparison.OrdinalIgnoreCase)) s = s.Substring(1);
-        int cut = s.IndexOfAny(new[] { '-', '+' });
-        if (cut >= 0) s = s.Substring(0, cut);
-        var parts = s.Split('.', StringSplitOptions.RemoveEmptyEntries);
-        if (parts.Length < 2) return false;
+        if (!info.InstallerAsset.HasValue) return null;
+        var asset = info.InstallerAsset.Value;
+        if (string.IsNullOrWhiteSpace(asset.DownloadUrl) || !asset.DownloadUrl.StartsWith("https://", StringComparison.OrdinalIgnoreCase)) return null;
 
-        int[] nums = new int[4];
-        int used = Math.Min(parts.Length, 4);
-        for (int i = 0; i < used; i++) {
-            if (!int.TryParse(parts[i], out nums[i])) return false;
+        string dir = Path.Combine(Path.GetTempPath(), "UpsStatusWidget", "updates", info.Tag);
+        Directory.CreateDirectory(dir);
+        string fileName = Path.GetFileName(asset.Name);
+        if (string.IsNullOrWhiteSpace(fileName)) fileName = $"UPS-Status-Widget-Setup-{info.Tag}.exe";
+        string dst = Path.Combine(dir, fileName);
+
+        using var client = new HttpClient();
+        client.DefaultRequestHeaders.UserAgent.ParseAdd("ups-status-widget");
+        using var resp = await client.GetAsync(asset.DownloadUrl, HttpCompletionOption.ResponseHeadersRead).ConfigureAwait(false);
+        resp.EnsureSuccessStatusCode();
+
+        await using (var input = await resp.Content.ReadAsStreamAsync().ConfigureAwait(false))
+        await using (var output = File.Create(dst)) {
+            await input.CopyToAsync(output).ConfigureAwait(false);
         }
 
-        version = used switch {
-            2 => new Version(nums[0], nums[1]),
-            3 => new Version(nums[0], nums[1], nums[2]),
-            _ => new Version(nums[0], nums[1], nums[2], nums[3])
-        };
-        return true;
+        if (!string.IsNullOrWhiteSpace(asset.Sha256Hex) && !VerifySha256(dst, asset.Sha256Hex)) {
+            try { File.Delete(dst); } catch { }
+            return null;
+        }
+
+        return dst;
+    }
+
+    static bool VerifySha256(string path, string expectedHex)
+    {
+        try {
+            using var sha = SHA256.Create();
+            using var fs = File.OpenRead(path);
+            byte[] hash = sha.ComputeHash(fs);
+            string actual = Convert.ToHexString(hash).ToLowerInvariant();
+            return string.Equals(actual, expectedHex.Trim().ToLowerInvariant(), StringComparison.Ordinal);
+        }
+        catch {
+            return false;
+        }
     }
 }
 
@@ -1228,6 +1245,8 @@ class UpsWidget : Form
 
         var mUpdate = new ToolStripMenuItem("Check for updates");
         mUpdate.Click += async (_, _) => await CheckForUpdatesAsync(interactive: true);
+        var mInstall = new ToolStripMenuItem("Install latest update");
+        mInstall.Click += async (_, _) => await InstallLatestUpdateAsync();
 
         var mExit = new ToolStripMenuItem("Exit");
         mExit.Click += (_, _) => { Log.W("Exit"); _tray.Visible = false; Application.Exit(); };
@@ -1242,6 +1261,7 @@ class UpsWidget : Form
         menu.Items.Add(mDiagLog);
         menu.Items.Add(_mDebug);
         menu.Items.Add(mUpdate);
+        menu.Items.Add(mInstall);
         menu.Items.Add(mLog);
         menu.Items.Add(new ToolStripSeparator());
         menu.Items.Add(mExit);
@@ -1529,7 +1549,7 @@ class UpsWidget : Form
             _lastUpdateCheckUtc = DateTime.UtcNow;
 
             Version current = ParseCurrentVersion();
-            var latest = await UpdateChecker.GetLatestAsync();
+            var latest = await UpdateChecker.GetLatestAsync(Environment.Is64BitProcess);
             if (!latest.HasValue) {
                 if (interactive) MessageBox.Show("Unable to check updates right now.", "UPS Status Widget", MessageBoxButtons.OK, MessageBoxIcon.Information);
                 return;
@@ -1556,12 +1576,76 @@ class UpsWidget : Form
                 return;
             }
 
-            if (MessageBox.Show(text + "\n\nOpen release page?", "UPS Status Widget", MessageBoxButtons.YesNo, MessageBoxIcon.Information) == DialogResult.Yes) {
+            var action = MessageBox.Show(
+                text + "\n\nYes = Install now\nNo = Open release page\nCancel = Later",
+                "UPS Status Widget",
+                MessageBoxButtons.YesNoCancel,
+                MessageBoxIcon.Information);
+            if (action == DialogResult.Yes) {
+                await InstallUpdateAsync(latest.Value, interactive: true);
+            } else if (action == DialogResult.No) {
                 OpenUrl(latest.Value.Url);
             }
         }
         catch {
             if (interactive) MessageBox.Show("Unable to check updates right now.", "UPS Status Widget", MessageBoxButtons.OK, MessageBoxIcon.Information);
+        }
+    }
+
+    async System.Threading.Tasks.Task InstallLatestUpdateAsync()
+    {
+        try {
+            Version current = ParseCurrentVersion();
+            var latest = await UpdateChecker.GetLatestAsync(Environment.Is64BitProcess);
+            if (!latest.HasValue) {
+                MessageBox.Show("Unable to check updates right now.", "UPS Status Widget", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                return;
+            }
+            if (latest.Value.Version <= current) {
+                MessageBox.Show($"You are up to date ({FormatVersion(current)}).", "UPS Status Widget", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                return;
+            }
+            await InstallUpdateAsync(latest.Value, interactive: true);
+        }
+        catch {
+            MessageBox.Show("Unable to install update right now.", "UPS Status Widget", MessageBoxButtons.OK, MessageBoxIcon.Information);
+        }
+    }
+
+    async System.Threading.Tasks.Task InstallUpdateAsync(UpdateInfo info, bool interactive)
+    {
+        try {
+            if (!info.InstallerAsset.HasValue) {
+                if (interactive && MessageBox.Show("Installer asset not found in latest release. Open release page?", "UPS Status Widget", MessageBoxButtons.YesNo, MessageBoxIcon.Information) == DialogResult.Yes) {
+                    OpenUrl(info.Url);
+                }
+                return;
+            }
+
+            Cursor oldCursor = Cursor.Current;
+            Cursor.Current = Cursors.WaitCursor;
+            string installerPath = await UpdateChecker.DownloadInstallerAsync(info);
+            Cursor.Current = oldCursor;
+            if (string.IsNullOrWhiteSpace(installerPath) || !File.Exists(installerPath)) {
+                MessageBox.Show("Failed to download or verify installer.", "UPS Status Widget", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                return;
+            }
+
+            var psi = new System.Diagnostics.ProcessStartInfo {
+                FileName = installerPath,
+                UseShellExecute = true
+            };
+            if (System.Diagnostics.Process.Start(psi) != null) {
+                Log.W($"Installer started: {installerPath}");
+                MessageBox.Show("Installer started. The app will now close.", "UPS Status Widget", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                _tray.Visible = false;
+                Application.Exit();
+            } else {
+                MessageBox.Show("Unable to start installer.", "UPS Status Widget", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            }
+        }
+        catch {
+            MessageBox.Show("Unable to install update right now.", "UPS Status Widget", MessageBoxButtons.OK, MessageBoxIcon.Warning);
         }
     }
 
