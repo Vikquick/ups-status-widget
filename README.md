@@ -27,6 +27,7 @@ Desktop widget for monitoring UPS telemetry on Windows via HID reports.
   - Show/Hide
   - Autostart
   - Check for updates
+  - Install latest update
   - Open log
   - Exit
 - Optional debug panel: `Ctrl+Shift+D`.
@@ -61,6 +62,20 @@ dotnet publish src/UpsStatusWidget.csproj -c Release -r win-x64 --self-contained
 - Inno Setup script: `installer/ups-status-widget.iss`
 - CI workflow: `.github/workflows/installer.yml`
 - On version tags (`v*`), CI builds and attaches installer `.exe` to GitHub Release.
+
+## In-App Update
+
+- Use tray menu:
+  - `Check for updates` to compare current version with latest GitHub release.
+  - `Install latest update` to download and launch installer from inside app.
+- Update installer is downloaded to `%TEMP%\\UpsStatusWidget\\updates\\<tag>`.
+- If release asset digest is provided, SHA-256 verification is performed before launch.
+
+### Troubleshooting
+
+- If update check fails, verify internet connectivity and retry.
+- If installer asset is missing in release, app offers opening release page directly.
+- If installer launch is blocked by policy/AV, run installer manually from `%TEMP%\\UpsStatusWidget\\updates\\`.
 
 ## Tests
 
