@@ -113,7 +113,9 @@ static class Win32
         public uint flags;
     }
 
-    public static readonly IntPtr HWND_BOTTOM  = new(1);
+    public static readonly IntPtr HWND_TOP     = new(0);
+    public static readonly IntPtr HWND_TOPMOST = new(-1);
+    public static readonly IntPtr HWND_NOTOPMOST = new(-2);
     public const uint SWP_NOACTIVATE = 0x0010;
     public const uint SWP_SHOWWINDOW = 0x0040;
     public const int  WM_WINDOWPOSCHANGING = 0x0046;
@@ -125,12 +127,14 @@ static class Win32
     public const uint MOD_CONTROL          = 0x0002;
     public const uint MOD_SHIFT            = 0x0004;
 
-    public static void PinToBottom(IntPtr hwnd, int x, int y, int w, int h)
+    public static void ShowWidgetWindow(IntPtr hwnd, int x, int y, int w, int h)
     {
-        SetWindowPos(hwnd, HWND_BOTTOM, x, y, w, h, SWP_NOACTIVATE | SWP_SHOWWINDOW);
+        // Bring window to visible z-order without stealing focus.
+        SetWindowPos(hwnd, HWND_TOPMOST, x, y, w, h, SWP_NOACTIVATE | SWP_SHOWWINDOW);
+        SetWindowPos(hwnd, HWND_NOTOPMOST, x, y, w, h, SWP_NOACTIVATE | SWP_SHOWWINDOW);
         ShowWindow(hwnd, 5);
         GetWindowRect(hwnd, out RECT r);
-        Log.W($"PinToBottom rect={r.L},{r.T}->{r.R},{r.B} vis={IsWindowVisible(hwnd)}");
+        Log.W($"ShowWidgetWindow rect={r.L},{r.T}->{r.R},{r.B} vis={IsWindowVisible(hwnd)}");
     }
 }
 
@@ -1221,7 +1225,7 @@ class UpsWidget : Form
         mResetPos.Click += (_, _) => {
             ResetToDefaultPosition();
             Show();
-            Win32.PinToBottom(Handle, Left, Top, W, Height);
+            Win32.ShowWidgetWindow(Handle, Left, Top, W, Height);
             Invalidate();
             Log.W($"Position reset to {Left},{Top}");
         };
@@ -1314,14 +1318,14 @@ class UpsWidget : Form
         try { Win32.RegisterHotKey(Handle, HotkeyDebugId, Win32.MOD_CONTROL | Win32.MOD_SHIFT, (uint)Keys.D); }
         catch { }
         Log.W($"OnShown at {Left},{Top}");
-        Win32.PinToBottom(Handle, Left, Top, W, Height);
+        Win32.ShowWidgetWindow(Handle, Left, Top, W, Height);
     }
 
     protected override void WndProc(ref Message m)
     {
         if (m.Msg == Win32.WM_WINDOWPOSCHANGING) {
             var wp = (Win32.WINDOWPOS)Marshal.PtrToStructure(m.LParam, typeof(Win32.WINDOWPOS))!;
-            wp.hwndInsertAfter = Win32.HWND_BOTTOM;
+            wp.hwndInsertAfter = Win32.HWND_TOP;
             wp.flags |= Win32.SWP_NOACTIVATE;
             Marshal.StructureToPtr(wp, m.LParam, false);
         }
@@ -1710,7 +1714,7 @@ class UpsWidget : Form
     {
         _showDebugPanel = on;
         Height = on ? HDebug : HBase;
-        Win32.PinToBottom(Handle, Left, Top, W, Height);
+        Win32.ShowWidgetWindow(Handle, Left, Top, W, Height);
         Log.W("DebugPanel=" + on);
         Invalidate();
     }
