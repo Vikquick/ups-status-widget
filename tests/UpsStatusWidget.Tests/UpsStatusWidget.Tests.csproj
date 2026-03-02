@@ -1,0 +1,18 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <OutputType>Exe</OutputType>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Compile Include="..\..\src\HidReportDeltaTracker.cs" Link="HidReportDeltaTracker.cs" />
+    <Compile Include="..\..\src\HidCorrelationFormatter.cs" Link="HidCorrelationFormatter.cs" />
+    <Compile Include="..\..\src\Pid0002RuntimeMapper.cs" Link="Pid0002RuntimeMapper.cs" />
+    <Compile Include="..\..\src\UpsSnapshot.cs" Link="UpsSnapshot.cs" />
+    <Compile Include="..\..\src\SnapshotHistory.cs" Link="SnapshotHistory.cs" />
+    <Compile Include="..\..\src\UpsRawSnapshot.cs" Link="UpsRawSnapshot.cs" />
+  </ItemGroup>
+</Project>
+

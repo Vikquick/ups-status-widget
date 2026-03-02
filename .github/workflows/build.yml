@@ -1,0 +1,89 @@
+name: Build and Release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup .NET 8
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "8.0.x"
+
+      - name: Restore
+        run: dotnet restore src/UpsStatusWidget.csproj
+
+      - name: Build
+        run: dotnet build src/UpsStatusWidget.csproj -c Release --no-restore
+
+      - name: Run tests
+        run: dotnet run --project tests/UpsStatusWidget.Tests/UpsStatusWidget.Tests.csproj -c Debug
+
+      - name: Publish x64
+        run: >
+          dotnet publish src/UpsStatusWidget.csproj
+          -c Release
+          -r win-x64
+          --self-contained true
+          -p:PublishSingleFile=true
+          -p:PublishTrimmed=false
+          -p:IncludeNativeLibrariesForSelfExtract=true
+          --output publish/x64
+
+      - name: Publish x86
+        run: >
+          dotnet publish src/UpsStatusWidget.csproj
+          -c Release
+          -r win-x86
+          --self-contained true
+          -p:PublishSingleFile=true
+          -p:PublishTrimmed=false
+          -p:IncludeNativeLibrariesForSelfExtract=true
+          --output publish/x86
+
+      - name: Prepare artifacts
+        shell: pwsh
+        run: |
+          Copy-Item publish/x64/UPS-Status-Widget.exe publish/UPS-Status-Widget-x64.exe
+          Copy-Item publish/x86/UPS-Status-Widget.exe publish/UPS-Status-Widget-x86.exe
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: UPS-Status-Widget-binaries
+          path: |
+            publish/UPS-Status-Widget-x64.exe
+            publish/UPS-Status-Widget-x86.exe
+          retention-days: 30
+
+      - name: Create GitHub Release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          name: UPS Status Widget ${{ github.ref_name }}
+          body: |
+            UPS Status Widget release ${{ github.ref_name }}.
+
+            Highlights:
+            - strict HID report mode (no metric fallbacks)
+            - dynamic HID telemetry mapping
+            - local status API endpoints: /status, /status/history, /status/raw
+            - optional debug panel in widget (Ctrl+Shift+D)
+          files: |
+            publish/UPS-Status-Widget-x64.exe
+            publish/UPS-Status-Widget-x86.exe
+          draft: false
+          prerelease: false
+
