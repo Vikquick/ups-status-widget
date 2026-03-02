@@ -26,6 +26,7 @@ Desktop widget for monitoring UPS telemetry on Windows via HID reports.
 - Tray icon with:
   - Show/Hide
   - Autostart
+  - Check for updates
   - Open log
   - Exit
 - Optional debug panel: `Ctrl+Shift+D`.

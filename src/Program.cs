@@ -4,7 +4,9 @@ using System.Drawing;
 using System.Drawing.Drawing2D;
 using System.Drawing.Text;
 using System.IO;
+using System.Net.Http;
 using System.Runtime.InteropServices;
+using System.Text.Json;
 using System.Threading;
 using System.Windows.Forms;
 using Microsoft.Win32;
@@ -128,6 +130,61 @@ static class Win32
         ShowWindow(hwnd, 5);
         GetWindowRect(hwnd, out RECT r);
         Log.W($"PinToBottom rect={r.L},{r.T}->{r.R},{r.B} vis={IsWindowVisible(hwnd)}");
+    }
+}
+
+readonly record struct UpdateInfo(string Tag, Version Version, string Url);
+
+static class UpdateChecker
+{
+    const string LatestReleaseUrl = "https://api.github.com/repos/Vikquick/ups-status-widget/releases/latest";
+
+    public static async System.Threading.Tasks.Task<UpdateInfo?> GetLatestAsync()
+    {
+        try {
+            using var client = new HttpClient();
+            client.DefaultRequestHeaders.UserAgent.ParseAdd("ups-status-widget");
+            string json = await client.GetStringAsync(LatestReleaseUrl).ConfigureAwait(false);
+            using var doc = JsonDocument.Parse(json);
+            if (!doc.RootElement.TryGetProperty("tag_name", out var tagEl)) return null;
+            string tag = tagEl.GetString() ?? string.Empty;
+            if (!TryParseTagVersion(tag, out var ver)) return null;
+
+            string url = string.Empty;
+            if (doc.RootElement.TryGetProperty("html_url", out var urlEl)) {
+                url = urlEl.GetString() ?? string.Empty;
+            }
+
+            return new UpdateInfo(tag, ver, url);
+        }
+        catch {
+            return null;
+        }
+    }
+
+    static bool TryParseTagVersion(string tag, out Version version)
+    {
+        version = new Version(0, 0);
+        if (string.IsNullOrWhiteSpace(tag)) return false;
+        string s = tag.Trim();
+        if (s.StartsWith("v", StringComparison.OrdinalIgnoreCase)) s = s.Substring(1);
+        int cut = s.IndexOfAny(new[] { '-', '+' });
+        if (cut >= 0) s = s.Substring(0, cut);
+        var parts = s.Split('.', StringSplitOptions.RemoveEmptyEntries);
+        if (parts.Length < 2) return false;
+
+        int[] nums = new int[4];
+        int used = Math.Min(parts.Length, 4);
+        for (int i = 0; i < used; i++) {
+            if (!int.TryParse(parts[i], out nums[i])) return false;
+        }
+
+        version = used switch {
+            2 => new Version(nums[0], nums[1]),
+            3 => new Version(nums[0], nums[1], nums[2]),
+            _ => new Version(nums[0], nums[1], nums[2], nums[3])
+        };
+        return true;
     }
 }
 
@@ -1111,6 +1168,8 @@ class UpsWidget : Form
     readonly NotifyIcon _tray;
     readonly UpsCollector _collector;
     readonly LocalStatusServer _statusServer;
+    DateTime _lastUpdateCheckUtc = DateTime.MinValue;
+    string _lastNotifiedTag;
 
     const string RegPath = @"Software\UPS-Status-Widget";
     const string RunKey  = @"Software\Microsoft\Windows\CurrentVersion\Run";
@@ -1157,6 +1216,9 @@ class UpsWidget : Form
             catch { }
         };
 
+        var mUpdate = new ToolStripMenuItem("Check for updates");
+        mUpdate.Click += async (_, _) => await CheckForUpdatesAsync(interactive: true);
+
         var mExit = new ToolStripMenuItem("Exit");
         mExit.Click += (_, _) => { Log.W("Exit"); _tray.Visible = false; Application.Exit(); };
 
@@ -1168,6 +1230,7 @@ class UpsWidget : Form
         menu.Items.Add(mAuto);
         menu.Items.Add(mDiagLog);
         menu.Items.Add(_mDebug);
+        menu.Items.Add(mUpdate);
         menu.Items.Add(mLog);
         menu.Items.Add(new ToolStripSeparator());
         menu.Items.Add(mExit);
@@ -1205,6 +1268,11 @@ class UpsWidget : Form
         catch (Exception ex) {
             Log.W("Local status endpoint failed: " + ex.Message);
         }
+
+        _ = CheckForUpdatesAsync(interactive: false);
+        var updateTimer = new System.Windows.Forms.Timer { Interval = 6 * 60 * 60 * 1000 };
+        updateTimer.Tick += async (_, _) => await CheckForUpdatesAsync(interactive: false);
+        updateTimer.Start();
 
         Log.W("Constructor done");
     }
@@ -1422,6 +1490,76 @@ class UpsWidget : Form
             k.SetValue("LogEnabled", on ? 1 : 0, RegistryValueKind.DWord);
             if (!on) Log.W("LoggingEnabled=False");
             Log.SetEnabled(on);
+        }
+        catch { }
+    }
+
+    async System.Threading.Tasks.Task CheckForUpdatesAsync(bool interactive)
+    {
+        try {
+            if (!interactive && (DateTime.UtcNow - _lastUpdateCheckUtc) < TimeSpan.FromMinutes(10)) return;
+            _lastUpdateCheckUtc = DateTime.UtcNow;
+
+            Version current = ParseCurrentVersion();
+            var latest = await UpdateChecker.GetLatestAsync();
+            if (!latest.HasValue) {
+                if (interactive) MessageBox.Show("Unable to check updates right now.", "UPS Status Widget", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                return;
+            }
+
+            bool hasUpdate = latest.Value.Version > current;
+            if (!hasUpdate) {
+                if (interactive) MessageBox.Show($"You are up to date ({FormatVersion(current)}).", "UPS Status Widget", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                return;
+            }
+
+            string text = $"New version available: {latest.Value.Tag} (current {FormatVersion(current)})";
+            Log.W("UpdateAvailable " + text);
+
+            if (!interactive) {
+                if (_lastNotifiedTag == latest.Value.Tag) return;
+                _lastNotifiedTag = latest.Value.Tag;
+                try {
+                    _tray.BalloonTipTitle = "UPS Status Widget";
+                    _tray.BalloonTipText = text;
+                    _tray.ShowBalloonTip(5000);
+                }
+                catch { }
+                return;
+            }
+
+            if (MessageBox.Show(text + "\n\nOpen release page?", "UPS Status Widget", MessageBoxButtons.YesNo, MessageBoxIcon.Information) == DialogResult.Yes) {
+                OpenUrl(latest.Value.Url);
+            }
+        }
+        catch {
+            if (interactive) MessageBox.Show("Unable to check updates right now.", "UPS Status Widget", MessageBoxButtons.OK, MessageBoxIcon.Information);
+        }
+    }
+
+    static Version ParseCurrentVersion()
+    {
+        string product = Application.ProductVersion ?? "0.0.0";
+        string cleaned = product.Split('+')[0];
+        if (Version.TryParse(cleaned, out var v)) return v;
+        return new Version(0, 0, 0);
+    }
+
+    static string FormatVersion(Version v)
+    {
+        if (v.Build >= 0) return $"{v.Major}.{v.Minor}.{v.Build}";
+        return $"{v.Major}.{v.Minor}";
+    }
+
+    static void OpenUrl(string url)
+    {
+        try {
+            if (string.IsNullOrWhiteSpace(url)) return;
+            var psi = new System.Diagnostics.ProcessStartInfo {
+                FileName = url,
+                UseShellExecute = true
+            };
+            System.Diagnostics.Process.Start(psi);
         }
         catch { }
     }
