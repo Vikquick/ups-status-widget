@@ -1187,6 +1187,7 @@ class UpsWidget : Form
                  ControlStyles.AllPaintingInWmPaint  |
                  ControlStyles.UserPaint, true);
         LoadPos();
+        EnsureVisibleOnScreen();
         Log.W($"Pos: {Left},{Top}");
 
         _tray = new NotifyIcon { Text = "UPS Status Widget", Icon = MkIcon(cGreen), Visible = true };
@@ -1198,6 +1199,15 @@ class UpsWidget : Form
         var mAuto = new ToolStripMenuItem("Autostart with Windows") { CheckOnClick = true };
         mAuto.Checked = IsAuto();
         mAuto.Click += (_, _) => SetAuto(mAuto.Checked);
+
+        var mResetPos = new ToolStripMenuItem("Reset position");
+        mResetPos.Click += (_, _) => {
+            ResetToDefaultPosition();
+            Show();
+            Win32.PinToBottom(Handle, Left, Top, W, Height);
+            Invalidate();
+            Log.W($"Position reset to {Left},{Top}");
+        };
 
         var mDiagLog = new ToolStripMenuItem("Debug logging") { CheckOnClick = true };
         mDiagLog.Checked = IsLogEnabledSetting();
@@ -1228,6 +1238,7 @@ class UpsWidget : Form
         menu.Items.Add(mShow);
         menu.Items.Add(new ToolStripSeparator());
         menu.Items.Add(mAuto);
+        menu.Items.Add(mResetPos);
         menu.Items.Add(mDiagLog);
         menu.Items.Add(_mDebug);
         menu.Items.Add(mUpdate);
@@ -1451,6 +1462,23 @@ class UpsWidget : Form
             if (k != null) { Left = (int)(k.GetValue("X") ?? 30); Top = (int)(k.GetValue("Y") ?? 30); return; }
         } catch { }
         Left = 30; Top = 30;
+    }
+
+    void EnsureVisibleOnScreen()
+    {
+        var rect = new Rectangle(Left, Top, Width, Height);
+        foreach (var s in Screen.AllScreens) {
+            if (s.WorkingArea.IntersectsWith(rect)) return;
+        }
+        ResetToDefaultPosition();
+    }
+
+    void ResetToDefaultPosition()
+    {
+        var wa = Screen.PrimaryScreen?.WorkingArea ?? new Rectangle(0, 0, 1920, 1080);
+        Left = Math.Max(wa.Left + 20, wa.Right - Width - 20);
+        Top = Math.Max(wa.Top + 20, wa.Bottom - Height - 60);
+        SavePos();
     }
 
     void SavePos()
