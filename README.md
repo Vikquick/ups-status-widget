@@ -15,7 +15,8 @@ Desktop widget for monitoring UPS telemetry on Windows via HID reports.
 - The app runs locally on your machine.
 - Local API binds to `127.0.0.1` only.
 - Logging is disabled by default.
-- Enable logging with environment variable: `UPS_HID_LOG=1`.
+- Enable logging in tray menu: `Debug logging`.
+- Optional override for advanced scenarios: `UPS_HID_LOG=1`.
 - Log path (when enabled): `Documents\UpsStatusWidget\logs\ups-status-widget.log` with rotation.
 - Logs/raw dumps may contain device identifiers (for example serial-like values). Do not publish them without redaction.
 

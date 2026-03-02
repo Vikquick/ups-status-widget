@@ -16,7 +16,9 @@ static class Log
 {
     const long MaxLogBytes = 1 * 1024 * 1024;
     const int MaxBackups = 3;
-    static readonly bool _enabled = ReadEnabledFlag();
+    const string SettingsRegPath = @"Software\UPS-Status-Widget";
+    const string SettingsLogEnabledName = "LogEnabled";
+    static bool _enabled = ReadEnabledFlag();
     static readonly string _dir = Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments),
         "UpsStatusWidget",
@@ -24,13 +26,13 @@ static class Log
     static readonly string _path = Path.Combine(_dir, "ups-status-widget.log");
     static readonly object _lock = new();
 
-    public static bool Enabled => _enabled;
+    public static bool Enabled { get { lock (_lock) return _enabled; } }
     public static string LogFilePath => _path;
     public static string LogDirectory => _dir;
 
     public static void W(string msg)
     {
-        if (!_enabled) return;
+        if (!Enabled) return;
         string line = $"{DateTime.Now:HH:mm:ss.fff} {msg}";
         lock (_lock) {
             try {
@@ -47,7 +49,31 @@ static class Log
     static bool ReadEnabledFlag()
     {
         string raw = Environment.GetEnvironmentVariable("UPS_HID_LOG");
-        if (string.IsNullOrWhiteSpace(raw)) return false;
+        if (!string.IsNullOrWhiteSpace(raw)) return ParseBool(raw);
+        try {
+            using var k = Registry.CurrentUser.OpenSubKey(SettingsRegPath);
+            if (k == null) return false;
+            object v = k.GetValue(SettingsLogEnabledName);
+            if (v == null) return false;
+            return v switch {
+                int i => i != 0,
+                string s => ParseBool(s),
+                _ => false
+            };
+        }
+        catch {
+            return false;
+        }
+    }
+
+    public static void SetEnabled(bool enabled)
+    {
+        lock (_lock) _enabled = enabled;
+        if (enabled) W("LoggingEnabled=True");
+    }
+
+    static bool ParseBool(string raw)
+    {
         raw = raw.Trim().ToLowerInvariant();
         return raw == "1" || raw == "true" || raw == "yes" || raw == "on";
     }
@@ -1114,6 +1140,10 @@ class UpsWidget : Form
         mAuto.Checked = IsAuto();
         mAuto.Click += (_, _) => SetAuto(mAuto.Checked);
 
+        var mDiagLog = new ToolStripMenuItem("Debug logging") { CheckOnClick = true };
+        mDiagLog.Checked = IsLogEnabledSetting();
+        mDiagLog.Click += (_, _) => SetLogEnabled(mDiagLog.Checked);
+
         var mLog = new ToolStripMenuItem("Open log");
         mLog.Click += (_, _) => {
             try {
@@ -1136,6 +1166,7 @@ class UpsWidget : Form
         menu.Items.Add(mShow);
         menu.Items.Add(new ToolStripSeparator());
         menu.Items.Add(mAuto);
+        menu.Items.Add(mDiagLog);
         menu.Items.Add(_mDebug);
         menu.Items.Add(mLog);
         menu.Items.Add(new ToolStripSeparator());
@@ -1364,6 +1395,35 @@ class UpsWidget : Form
     {
         try { using var k = Registry.CurrentUser.OpenSubKey(RunKey); return k?.GetValue("UPS-Status-Widget") != null; }
         catch { return false; }
+    }
+
+    static bool IsLogEnabledSetting()
+    {
+        try {
+            using var k = Registry.CurrentUser.OpenSubKey(RegPath);
+            if (k == null) return Log.Enabled;
+            object v = k.GetValue("LogEnabled");
+            if (v == null) return Log.Enabled;
+            return v switch {
+                int i => i != 0,
+                string s => s == "1" || string.Equals(s, "true", StringComparison.OrdinalIgnoreCase),
+                _ => Log.Enabled
+            };
+        }
+        catch {
+            return Log.Enabled;
+        }
+    }
+
+    void SetLogEnabled(bool on)
+    {
+        try {
+            using var k = Registry.CurrentUser.CreateSubKey(RegPath);
+            k.SetValue("LogEnabled", on ? 1 : 0, RegistryValueKind.DWord);
+            if (!on) Log.W("LoggingEnabled=False");
+            Log.SetEnabled(on);
+        }
+        catch { }
     }
 
     void SetAuto(bool on)
