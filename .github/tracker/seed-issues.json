@@ -1,0 +1,42 @@
+[
+  {
+    "title": "feat: add in-app setting for debug logs",
+    "body": "Add UI control (tray/settings) to enable and disable debug logging without relying on environment variables.\n\nAcceptance criteria:\n- [ ] UI switch for logging mode\n- [ ] Persisted setting in registry/config\n- [ ] Logging remains disabled by default",
+    "labels": ["enhancement", "priority:high"]
+  },
+  {
+    "title": "release: create v2.0.0 tag and publish GitHub release artifacts",
+    "body": "Create and verify release tag on clean history. Ensure x64/x86 artifacts are attached and release notes are accurate.",
+    "labels": ["release", "priority:high", "ci"]
+  },
+  {
+    "title": "ci: verify GitHub Actions pipeline after repository rename",
+    "body": "Validate all workflows after move to ups-status-widget repository and fix any stale paths or artifact names.",
+    "labels": ["ci", "priority:high"]
+  },
+  {
+    "title": "feat: add update checker against latest GitHub release",
+    "body": "Implement non-intrusive update check with current version comparison and optional prompt to open release page.",
+    "labels": ["enhancement", "priority:high"]
+  },
+  {
+    "title": "feat: add Windows installer (MSI or bootstrapper)",
+    "body": "Ship an installer with Start Menu/Desktop options and clean uninstall path.",
+    "labels": ["enhancement", "release", "priority:high"]
+  },
+  {
+    "title": "chore: audit GitHub settings after rename",
+    "body": "Audit repository metadata, links, badges, branch protection, Actions permissions and other settings for old names.",
+    "labels": ["docs", "priority:medium"]
+  },
+  {
+    "title": "chore: add .gitattributes for line endings normalization",
+    "body": "Add .gitattributes to normalize EOL behavior across contributors and CI.",
+    "labels": ["docs", "priority:medium"]
+  },
+  {
+    "title": "release: create repeatable release checklist",
+    "body": "Document release flow including tagging, workflow verification, smoke testing and post-release checks.",
+    "labels": ["release", "docs", "priority:low"]
+  }
+]

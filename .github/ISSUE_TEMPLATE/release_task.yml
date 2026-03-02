@@ -1,0 +1,26 @@
+name: Release task
+description: Work item needed to ship a release
+title: "release: "
+labels:
+  - release
+  - needs-triage
+body:
+  - type: input
+    id: target
+    attributes:
+      label: Target version
+      placeholder: v2.0.0
+    validations:
+      required: true
+  - type: textarea
+    id: scope
+    attributes:
+      label: Scope
+      placeholder: What must be done before release?
+    validations:
+      required: true
+  - type: textarea
+    id: verification
+    attributes:
+      label: Verification
+      placeholder: Build/test/checklist evidence

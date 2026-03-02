@@ -60,6 +60,13 @@ dotnet publish src/UpsStatusWidget.csproj -c Release -r win-x64 --self-contained
 dotnet run --project tests/UpsStatusWidget.Tests/UpsStatusWidget.Tests.csproj -c Debug
 ```
 
+## Project Tracking
+
+- Issue templates are configured under `.github/ISSUE_TEMPLATE/`.
+- Labels are managed from `.github/labels.yml` via `Sync Labels` workflow.
+- Milestone/seed issues are bootstrapped from `.github/tracker/seed-issues.json` via `Bootstrap Tracker` workflow.
+- Release process checklist: `docs/RELEASE_CHECKLIST.md`.
+
 ## License
 
 See [LICENSE](LICENSE).
