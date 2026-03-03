@@ -103,6 +103,7 @@ static class Win32
     [DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr h, int cmd);
     [DllImport("user32.dll")] public static extern bool GetWindowRect(IntPtr h, out RECT r);
     [DllImport("user32.dll")] public static extern bool IsWindowVisible(IntPtr h);
+    [DllImport("user32.dll", SetLastError = true)] public static extern bool DestroyIcon(IntPtr hIcon);
     [DllImport("user32.dll", SetLastError = true)] public static extern bool RegisterHotKey(IntPtr hWnd, int id, uint fsModifiers, uint vk);
     [DllImport("user32.dll", SetLastError = true)] public static extern bool UnregisterHotKey(IntPtr hWnd, int id);
 
@@ -114,6 +115,7 @@ static class Win32
     }
 
     public static readonly IntPtr HWND_NOTOPMOST = new(-2);
+    public static readonly IntPtr HWND_TOP = IntPtr.Zero;
     public const uint SWP_NOACTIVATE = 0x0010;
     public const uint SWP_SHOWWINDOW = 0x0040;
     public const int  WM_WINDOWPOSCHANGING = 0x0046;
@@ -1184,6 +1186,9 @@ class UpsWidget : Form
     Point _dragStart;
     bool _dragging;
     readonly NotifyIcon _tray;
+    readonly Icon _iconGreen;
+    readonly Icon _iconWarn;
+    readonly Icon _iconDanger;
     readonly UpsCollector _collector;
     readonly LocalStatusServer _statusServer;
     DateTime _lastUpdateCheckUtc = DateTime.MinValue;
@@ -1208,11 +1213,14 @@ class UpsWidget : Form
         EnsureVisibleOnScreen();
         Log.W($"Pos: {Left},{Top}");
 
-        _tray = new NotifyIcon { Text = "UPS Status Widget", Icon = MkIcon(cGreen), Visible = true };
+        _iconGreen = MkIcon(cGreen);
+        _iconWarn = MkIcon(cWarn);
+        _iconDanger = MkIcon(cDanger);
+        _tray = new NotifyIcon { Text = "UPS Status Widget", Icon = _iconGreen, Visible = true };
 
         var menu  = new ContextMenuStrip();
-        var mShow = new ToolStripMenuItem("Show / Hide");
-        mShow.Click += (_, _) => { if (Visible) { Hide(); Log.W("Hidden"); } else { Show(); Log.W("Shown"); } };
+        var mShow = new ToolStripMenuItem("Show widget");
+        mShow.Click += (_, _) => RestoreWindow();
 
         var mAuto = new ToolStripMenuItem("Autostart with Windows") { CheckOnClick = true };
         mAuto.Checked = IsAuto();
@@ -1267,7 +1275,7 @@ class UpsWidget : Form
         menu.Items.Add(new ToolStripSeparator());
         menu.Items.Add(mExit);
         _tray.ContextMenuStrip = menu;
-        _tray.DoubleClick += (_, _) => { if (!Visible) Show(); Invalidate(); };
+        _tray.DoubleClick += (_, _) => RestoreWindow();
 
         _collector = new UpsCollector(TimeSpan.FromSeconds(1));
         _collector.SnapshotUpdated += s => {
@@ -1276,7 +1284,7 @@ class UpsWidget : Form
                 _snapshot = s;
                 string tl = s.Timeleft.HasValue ? $"{(int)s.Timeleft.Value}min" : "N/A";
                 _tray.Text = $"UPS: {(int)s.Bcharge}% | {tl}";
-                _tray.Icon = MkIcon(s.Bcharge > 50 ? cGreen : s.Bcharge > 20 ? cWarn : cDanger);
+                _tray.Icon = s.Bcharge > 50 ? _iconGreen : s.Bcharge > 20 ? _iconWarn : _iconDanger;
                 Invalidate();
             });
         };
@@ -1481,11 +1489,8 @@ class UpsWidget : Form
 
     void EnsureVisibleOnScreen()
     {
-        var rect = new Rectangle(Left, Top, Width, Height);
-        foreach (var s in Screen.AllScreens) {
-            if (s.WorkingArea.IntersectsWith(rect)) return;
-        }
-        ResetToDefaultPosition();
+        var area = Screen.FromPoint(new Point(Left, Top)).WorkingArea;
+        ClampIntoArea(area);
     }
 
     void ResetToDefaultPosition()
@@ -1494,6 +1499,28 @@ class UpsWidget : Form
         Left = Math.Max(wa.Left + 20, wa.Right - Width - 20);
         Top = Math.Max(wa.Top + 20, wa.Bottom - Height - 60);
         SavePos();
+    }
+
+    void ClampIntoArea(Rectangle area)
+    {
+        int maxLeft = Math.Max(area.Left, area.Right - Width);
+        int maxTop = Math.Max(area.Top, area.Bottom - Height);
+        Left = Math.Clamp(Left, area.Left, maxLeft);
+        Top = Math.Clamp(Top, area.Top, maxTop);
+    }
+
+    void RestoreWindow()
+    {
+        var area = Screen.FromPoint(new Point(Left, Top)).WorkingArea;
+        ClampIntoArea(area);
+        SavePos();
+        if (!Visible) Show();
+        if (WindowState == FormWindowState.Minimized) WindowState = FormWindowState.Normal;
+        // One-shot raise: bring to front now, then keep non-topmost.
+        Win32.SetWindowPos(Handle, Win32.HWND_TOP, Left, Top, W, Height, Win32.SWP_NOACTIVATE | Win32.SWP_SHOWWINDOW);
+        Win32.ShowWidgetWindow(Handle, Left, Top, W, Height);
+        Invalidate();
+        Log.W($"Shown at {Left},{Top}");
     }
 
     void SavePos()
@@ -1683,12 +1710,19 @@ class UpsWidget : Form
 
     static Icon MkIcon(Color c)
     {
-        var b = new Bitmap(16, 16);
+        using var b = new Bitmap(16, 16);
         using var g = Graphics.FromImage(b);
         g.SmoothingMode = SmoothingMode.AntiAlias;
         using var br = new SolidBrush(c);
         g.FillEllipse(br, new Rectangle(2, 2, 12, 12));
-        return Icon.FromHandle(b.GetHicon());
+        IntPtr hIcon = b.GetHicon();
+        try {
+            using var tmp = Icon.FromHandle(hIcon);
+            return (Icon)tmp.Clone();
+        }
+        finally {
+            Win32.DestroyIcon(hIcon);
+        }
     }
 
     protected override void OnFormClosing(FormClosingEventArgs e)
@@ -1698,6 +1732,10 @@ class UpsWidget : Form
         _statusServer.Dispose();
         _collector.Dispose();
         _tray.Visible = false;
+        _tray.Dispose();
+        _iconGreen.Dispose();
+        _iconWarn.Dispose();
+        _iconDanger.Dispose();
         base.OnFormClosing(e);
     }
 
